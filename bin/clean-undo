@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+UNDODIR="$HOME/.vim/undo"
+
+for undofile in `ls -1 "$UNDODIR"`
+do
+    file=`echo "$undofile" | sed 's:%:/:g'`
+
+    if ! [ -f "$file" ]
+    then
+        rm -v "$UNDODIR/$undofile"
+    fi
+done
