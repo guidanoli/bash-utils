@@ -4,31 +4,134 @@ set -euo pipefail
 
 if [ $# -eq 0 ]
 then
-    echo "Adjust modification timestamp of files based solely on their names" >&2
+    echo "Adjust modification timestamp and names of files based solely on their names" >&2
     echo "Patterns: CCYYMMDD.HHmmss, DD.MM.CCYY.HH.MM.ss, CCYY.MMDDHH, CCYY.MM.DD.+HH.mm.ss" >&2
     echo "Usage: $0 [FILES...]" >&2
     exit 1
 fi
 
-for file in "$@"
+for filename in "$@"
 do
-    if [[ "$file" =~ [0-9]{8}[^0-9][0-9]{6} ]]
+    ## Make sure filename points to a file
+
+    if
+        [[ ! -e "$filename" ]]
     then
-        timestamp=`echo "$file" | sed -E 's/.*([0-9]{8})[^0-9]([0-9]{4})([0-9]{2}).*/\1\2.\3/'`
-        touch "$file" -t "$timestamp"
-    elif [[ "$file" =~ [0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{4}[^0-9][0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{2} ]]
+        echo "File does not exist: $filename" >&2
+        exit 1
+    elif
+        [[ ! -f "$filename" ]]
     then
-        timestamp=`echo "$file" | sed -E 's/.*([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{4})[^0-9]([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{2}).*/\3\2\1\4\5.\6/'`
-        touch "$file" -t "$timestamp"
-    elif [[ "$file" =~ [0-9]{8} ]]
-    then
-        timestamp=`echo "$file" | sed -E 's/.*([0-9]{8}).*/\11200/'`
-        touch "$file" -t "$timestamp"
-    elif [[ "$file" =~ [0-9]{4}[^0-9][0-9]{2}[^0-9][0-9]{2}[^0-9]+[0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{2} ]]
-    then
-        timestamp=`echo "$file" | sed -E 's/.*([0-9]{4})[^0-9]([0-9]{2})[^0-9]([0-9]{2})[^0-9]+([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{2}).*/\1\2\3\4\5.\6/'`
-        touch "$file" -t "$timestamp"
-    else
-        echo "Missing: $file"
+        echo "Not a file: $filename" >&2
+        exit 1
     fi
+
+    ## Extract timestamp from filename
+
+    if
+        [[ "$filename" =~ [0-9]{8}[^0-9][0-9]{6} ]]
+    then
+        timestamp=`echo -- "$filename" | sed -E 's/.*([0-9]{8})[^0-9]([0-9]{4})([0-9]{2}).*/\1\2.\3/'`
+    elif
+        [[ "$filename" =~ [0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{4}[^0-9][0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{2} ]]
+    then
+        timestamp=`echo -- "$filename" | sed -E 's/.*([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{4})[^0-9]([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{2}).*/\3\2\1\4\5.\6/'`
+    elif
+        [[ "$filename" =~ [0-9]{8} ]]
+    then
+        timestamp=`echo -- "$filename" | sed -E 's/.*([0-9]{8}).*/\11200/'`
+    elif
+        [[ "$filename" =~ [0-9]{4}[^0-9][0-9]{2}[^0-9][0-9]{2}[^0-9]+[0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{2} ]]
+    then
+        timestamp=`echo -- "$filename" | sed -E 's/.*([0-9]{4})[^0-9]([0-9]{2})[^0-9]([0-9]{2})[^0-9]+([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{2}).*/\1\2\3\4\5.\6/'`
+    else
+        echo "Could not extract timestamp from filename '$filename'" >&2
+        exit 1
+    fi
+
+    ## Extract extension from filename
+
+    if
+        [[ "$filename" =~ \. ]]
+    then
+        extension=".${filename##*.}"
+    else
+        extension=""
+    fi
+
+    ## Calculate file hash
+
+    filehash=`sha256sum -- "$filename" | awk '{ print $1 }'`
+
+    if
+        [[ -z "$filehash" ]]
+    then
+        echo "Could not compute the SHA-1 hash of '$filename'" >&2
+        exit 1
+    fi
+
+    ## Check if timestamp is well-formed
+
+    if
+        [[ ! "$timestamp" =~ ^[0-9]{12}\.[0-9]{2}$ ]]
+    then
+        echo "Internal error: Ill-fomed timestamp '$timestamp' from filename '$filename'" >&2
+        exit 2
+    fi
+
+    ## Construct new filename
+
+    datestring=`echo $timestamp | sed -E 's/([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})\.([0-9]{2})/\1-\2-\3_\4-\5-\6/'`
+
+    if
+        [[ ! $datestring =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]]
+    then
+        echo "Internal error: Ill-formed CCYY-MM-DD_HH-mm-ss date string '$datestring'" >&2
+        exit 2
+    fi
+
+    shortened_filehash=`echo $filehash | head -c5`
+
+    if
+        [[ ! $shortened_filehash =~ ^[0-9a-fA-F]+$ ]]
+    then
+        echo "Internal error: Ill-formed hexstring '$shortened_filehash'" >&2
+        exit 2
+    fi
+
+    newfilename=${datestring}__${shortened_filehash}${extension}
+
+    ## Check if new filename points to a non-existing file or file of equal hash
+
+    if
+        [[ -f "$newfilename" ]]
+    then
+        newfilehash=`sha256sum "$newfilename" | awk '{ print $1 }'`
+
+        if
+            [[ "$filehash" == "$newfilehash" ]]
+        then
+            echo "Silently overwriting file with equal hashes..." >&2
+        else
+            echo "Tried to overwrite file '$newfilename' with different hash than '$filename'" >&2
+            exit 1
+        fi
+    elif
+        [[ -e "$newfilename" ]]
+    then
+        echo "Tried to overwrite '$newfilename', which already exists" >&2
+        exit 1
+    fi
+
+    ## Adjust timestamp of file
+
+    touch -t "$timestamp" -- "$filename"
+
+    ## Rename file
+
+    mv -- "$filename" "$newfilename"
+
+    ## Print changes
+
+    echo -- "$filename -> $newfilename"
 done
