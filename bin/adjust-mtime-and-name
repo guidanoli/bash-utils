@@ -109,10 +109,8 @@ do
         newfilehash=`sha256sum "$newfilename" | awk '{ print $1 }'`
 
         if
-            [[ "$filehash" == "$newfilehash" ]]
+            [[ "$filehash" != "$newfilehash" ]]
         then
-            echo "Silently overwriting file with equal hashes..." >&2
-        else
             echo "Tried to overwrite file '$newfilename' with different hash than '$filename'" >&2
             exit 1
         fi
@@ -127,11 +125,11 @@ do
 
     touch -t "$timestamp" -- "$filename"
 
-    ## Rename file
+    ## Rename file (if new path is different)
 
-    mv -- "$filename" "$newfilename"
-
-    ## Print changes
-
-    echo "$filename -> $newfilename"
+    if
+        [[ ! "$filename" -ef "$newfilename" ]]
+    then
+        mv -v "$filename" "$newfilename"
+    fi
 done
