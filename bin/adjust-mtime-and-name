@@ -48,7 +48,7 @@ do
     elif
         [[ "$filename" =~ [0-9]{8} ]]
     then
-        timestamp=`echo "$filename" | sed -E 's/.*([0-9]{8}).*/\11200/'`
+        timestamp=`echo "$filename" | sed -E 's/.*([0-9]{8}).*/\11200.00/'`
     elif
         [[ "$filename" =~ [0-9]{4}[^0-9][0-9]{2}[^0-9][0-9]{2}[^0-9]+[0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{2} ]]
     then
