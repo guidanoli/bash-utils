@@ -12,23 +12,28 @@ fi
 
 exit_code=0
 
-for filename in "$@"
+for filepath in "$@"
 do
-    ## Make sure filename points to a file
+    ## Make sure filepath points to a file
 
     if
-        [[ ! -e "$filename" ]]
+        [[ ! -e "$filepath" ]]
     then
-        echo "File does not exist: $filename" >&2
+        echo "File does not exist: $filepath" >&2
         exit_code=1
         continue
     elif
-        [[ ! -f "$filename" ]]
+        [[ ! -f "$filepath" ]]
     then
-        echo "Not a file: $filename" >&2
+        echo "Not a file: $filepath" >&2
         exit_code=1
         continue
     fi
+
+    ## Separate filepath into directory and filename
+
+    directory=$(dirname "$filepath")
+    filename=$(basename "$filepath")
 
     ## Extract timestamp from filename
 
@@ -54,6 +59,15 @@ do
         continue
     fi
 
+    ## Check if timestamp is well-formed
+
+    if
+        [[ ! "$timestamp" =~ ^[0-9]{12}\.[0-9]{2}$ ]]
+    then
+        echo "Internal error: Ill-formed timestamp '$timestamp' from filename '$filename'" >&2
+        exit 1
+    fi
+
     ## Extract extension from filename
 
     if
@@ -66,21 +80,12 @@ do
 
     ## Calculate file hash
 
-    filehash=`sha256sum -- "$filename" | awk '{ print $1 }'`
+    filehash=`sha256sum -- "$filepath" | awk '{ print $1 }'`
 
     if
         [[ -z "$filehash" ]]
     then
-        echo "Internal error: Could not compute the SHA-1 hash of '$filename'" >&2
-        exit 1
-    fi
-
-    ## Check if timestamp is well-formed
-
-    if
-        [[ ! "$timestamp" =~ ^[0-9]{12}\.[0-9]{2}$ ]]
-    then
-        echo "Internal error: Ill-fomed timestamp '$timestamp' from filename '$filename'" >&2
+        echo "Internal error: Could not compute the SHA-1 hash of '$filepath'" >&2
         exit 1
     fi
 
@@ -104,40 +109,40 @@ do
         exit 1
     fi
 
-    newfilename=${datestring}__${shortened_filehash}${extension}
+    newfilepath=${directory}/${datestring}__${shortened_filehash}${extension}
 
-    ## Check if new filename points to a non-existing file or file of equal hash
+    ## Check if new filepath points to a non-existing file or file of equal hash
 
     if
-        [[ -f "$newfilename" ]]
+        [[ -f "$newfilepath" ]]
     then
-        newfilehash=`sha256sum "$newfilename" | awk '{ print $1 }'`
+        newfilehash=`sha256sum "$newfilepath" | awk '{ print $1 }'`
 
         if
             [[ "$filehash" != "$newfilehash" ]]
         then
-            echo "Cannot overwrite file '$newfilename' with different hash than '$filename'" >&2
+            echo "Cannot overwrite file '$newfilepath' with different hash than '$filename'" >&2
             exit_code=1
             continue
         fi
     elif
-        [[ -d "$newfilename" ]]
+        [[ -d "$newfilepath" ]]
     then
-        echo "Cannot overwrite '$newfilename', because it is a directory" >&2
+        echo "Cannot overwrite '$newfilepath', because it is a directory" >&2
         exit_code=1
         continue
     fi
 
     ## Adjust timestamp of file
 
-    touch -t "$timestamp" -- "$filename"
+    touch -t "$timestamp" -- "$filepath"
 
     ## Rename file (if new path is different)
 
     if
-        [[ ! "$filename" -ef "$newfilename" ]]
+        [[ ! "$filepath" -ef "$newfilepath" ]]
     then
-        mv -v "$filename" "$newfilename"
+        mv -v "$filepath" "$newfilepath"
     fi
 done
 
