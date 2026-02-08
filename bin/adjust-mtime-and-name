@@ -40,31 +40,45 @@ do
     if
         [[ "$filename" =~ [0-9]{8}[^0-9][0-9]{6} ]]
     then
-        timestamp=`echo "$filename" | sed -E 's/.*([0-9]{8})[^0-9]([0-9]{4})([0-9]{2}).*/\1\2.\3/'`
+        new_timestamp=`echo "$filename" | sed -E 's/.*([0-9]{8})[^0-9]([0-9]{4})([0-9]{2}).*/\1\2.\3/'`
     elif
         [[ "$filename" =~ [0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{4}[^0-9][0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{2} ]]
     then
-        timestamp=`echo "$filename" | sed -E 's/.*([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{4})[^0-9]([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{2}).*/\3\2\1\4\5.\6/'`
+        new_timestamp=`echo "$filename" | sed -E 's/.*([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{4})[^0-9]([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{2}).*/\3\2\1\4\5.\6/'`
     elif
         [[ "$filename" =~ [0-9]{8} ]]
     then
-        timestamp=`echo "$filename" | sed -E 's/.*([0-9]{8}).*/\11200.00/'`
+        new_timestamp=`echo "$filename" | sed -E 's/.*([0-9]{8}).*/\11200.00/'`
     elif
         [[ "$filename" =~ [0-9]{4}[^0-9][0-9]{2}[^0-9][0-9]{2}[^0-9]+[0-9]{2}[^0-9][0-9]{2}[^0-9][0-9]{2} ]]
     then
-        timestamp=`echo "$filename" | sed -E 's/.*([0-9]{4})[^0-9]([0-9]{2})[^0-9]([0-9]{2})[^0-9]+([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{2}).*/\1\2\3\4\5.\6/'`
+        new_timestamp=`echo "$filename" | sed -E 's/.*([0-9]{4})[^0-9]([0-9]{2})[^0-9]([0-9]{2})[^0-9]+([0-9]{2})[^0-9]([0-9]{2})[^0-9]([0-9]{2}).*/\1\2\3\4\5.\6/'`
     else
         echo "Could not extract timestamp from file '$filepath'" >&2
         exit_code=1
         continue
     fi
 
-    ## Check if timestamp is well-formed
+    ## Check if new timestamp is well-formed
 
     if
-        [[ ! "$timestamp" =~ ^[0-9]{12}\.[0-9]{2}$ ]]
+        [[ ! "$new_timestamp" =~ ^[0-9]{12}\.[0-9]{2}$ ]]
     then
-        echo "Internal error: Ill-formed timestamp '$timestamp' from file '$filepath'" >&2
+        echo "Internal error: Ill-formed new timestamp '$new_timestamp' from file '$filepath'" >&2
+        exit 1
+    fi
+
+    # Extract timestamp from file
+
+    current_timestamp_unix=`stat -c '%Y' "$filepath"`
+    current_timestamp=`date -d "@${current_timestamp_unix}" '+%Y%m%d%H%M.%S'`
+
+    ## Check if current timestamp is well-formed
+
+    if
+        [[ ! "$current_timestamp" =~ ^[0-9]{12}\.[0-9]{2}$ ]]
+    then
+        echo "Internal error: Ill-formed current timestamp '$current_timestamp' from file '$filepath'" >&2
         exit 1
     fi
 
@@ -91,7 +105,7 @@ do
 
     ## Construct new filename
 
-    datestring=`echo $timestamp | sed -E 's/([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})\.([0-9]{2})/\1-\2-\3_\4-\5-\6/'`
+    datestring=`echo $new_timestamp | sed -E 's/([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})\.([0-9]{2})/\1-\2-\3_\4-\5-\6/'`
 
     if
         [[ ! $datestring =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]]
@@ -133,16 +147,21 @@ do
         continue
     fi
 
-    ## Adjust timestamp of file
-
-    touch -t "$timestamp" -- "$filepath"
-
     ## Rename file (if new path is different)
 
     if
         [[ ! "$filepath" -ef "$newfilepath" ]]
     then
         mv -v "$filepath" "$newfilepath"
+    fi
+
+    ## Adjust timestamp of file
+
+    if
+        [[ "$new_timestamp" != "$current_timestamp" ]]
+    then
+        touch -t "$new_timestamp" -- "$newfilepath"
+        echo "Adjusted timestamp of $newfilepath"
     fi
 done
 
