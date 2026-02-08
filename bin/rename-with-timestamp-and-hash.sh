@@ -10,10 +10,13 @@ if [[ $# -eq 0 ]]; then
     exit 1
 fi
 
+exit_code=0
+
 for filepath in "$@"; do
     # Ensure file exists and is regular
     if [[ ! -f "$filepath" ]]; then
         echo "Skipping '$filepath' (not a regular file)" >&2
+        exit_code=1
         continue
     fi
 
@@ -22,8 +25,8 @@ for filepath in "$@"; do
         stat -c '%y' "$filepath" | awk -F'[-:. ]' '{print $1, $2, $3, $4, $5, $6}'
     )
 
-    # Get SHA-256 hash truncated to 5 hex digits
-    hash=$(sha256sum "$filepath" | head -c5)
+    # Get SHA-256 hash of file
+    filehash=$(sha256sum "$filepath" | awk '{ print $1 }')
 
     # Separate filepath into directory and filename
     directory=$(dirname "$filepath")
@@ -35,14 +38,40 @@ for filepath in "$@"; do
         ext=".${filename##*.}"
     fi
 
-    newfilepath="${directory}/${year}-${month}-${day}_${hour}-${minute}-${second}__${hash}${ext}"
+    # Truncate the file hash to 5 hexdigits
+    shortened_filehash=$(echo $filehash | head -c5)
 
-    # Avoid overwriting existing file
-    if [[ -e "$newfilepath" ]]; then
-        echo "Skipping '$filepath': target '$newfilepath' already exists" >&2
+    newfilepath="${directory}/${year}-${month}-${day}_${hour}-${minute}-${second}__${shortened_filehash}${ext}"
+
+    if
+        [[ -f "$newfilepath" ]]
+    then
+        newfilehash=$(sha256sum "$newfilepath" | awk '{ print $1 }')
+
+        if
+            [[ "$filehash" != "$newfilehash" ]]
+        then
+            echo "Cannot overwrite file '$newfilepath' with different hash than '$filepath'" >&2
+            exit_code=1
+            continue
+        fi
+    elif
+        [[ -d "$newfilepath" ]]
+    then
+        echo "Cannot overwrite '$newfilepath', because it is a directory" >&2
+        exit_code=1
         continue
     fi
 
-    mv -- "$filepath" "$newfilepath"
-    echo "Renamed '$filepath' -> '$newfilepath'"
+    ## Rename file (if new path is different)
+
+    if
+        [[ ! "$filepath" -ef "$newfilepath" ]]
+    then
+        mv -v "$filepath" "$newfilepath"
+    fi
 done
+
+## Exit with code
+
+exit $exit_code
