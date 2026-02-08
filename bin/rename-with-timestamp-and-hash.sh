@@ -35,7 +35,7 @@ for filepath in "$@"; do
         ext=".${filename##*.}"
     fi
 
-    newfilepath="${directory}/${year}-${month}-${day}_${hour}-${minute}-${second}_${hash}${ext}"
+    newfilepath="${directory}/${year}-${month}-${day}_${hour}-${minute}-${second}__${hash}${ext}"
 
     # Avoid overwriting existing file
     if [[ -e "$newfilepath" ]]; then
