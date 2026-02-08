@@ -22,8 +22,8 @@ for filepath in "$@"; do
         stat -c '%y' "$filepath" | awk -F'[-:. ]' '{print $1, $2, $3, $4, $5, $6}'
     )
 
-    # Get SHA-256 hash truncated to 8 hex digits
-    hash=$(sha256sum "$filepath" | cut -c1-8)
+    # Get SHA-256 hash truncated to 5 hex digits
+    hash=$(sha256sum "$filepath" | head -c5)
 
     # Separate filepath into directory and filename
     directory=$(dirname "$filepath")
