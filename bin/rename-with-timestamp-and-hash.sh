@@ -10,36 +10,39 @@ if [[ $# -eq 0 ]]; then
     exit 1
 fi
 
-for file in "$@"; do
+for filepath in "$@"; do
     # Ensure file exists and is regular
-    if [[ ! -f "$file" ]]; then
-        echo "Skipping '$file' (not a regular file)" >&2
+    if [[ ! -f "$filepath" ]]; then
+        echo "Skipping '$filepath' (not a regular file)" >&2
         continue
     fi
 
     # Get modification time components (GNU stat format)
     read -r year month day hour minute second < <(
-        stat -c '%y' "$file" | awk -F'[-:. ]' '{print $1, $2, $3, $4, $5, $6}'
+        stat -c '%y' "$filepath" | awk -F'[-:. ]' '{print $1, $2, $3, $4, $5, $6}'
     )
 
     # Get SHA-256 hash truncated to 8 hex digits
-    hash=$(sha256sum "$file" | cut -c1-8)
+    hash=$(sha256sum "$filepath" | cut -c1-8)
+
+    # Separate filepath into directory and filename
+    directory=$(dirname "$filepath")
+    filename=$(basename "$filepath")
 
     # Extract extension (preserve if exists)
-    base=$(basename "$file")
     ext=""
-    if [[ "$base" == *.* && "$base" != .* ]]; then
-        ext=".${base##*.}"
+    if [[ "$filename" == *.* && "$filename" != .* ]]; then
+        ext=".${filename##*.}"
     fi
 
-    newname="${year}-${month}-${day}_${hour}-${minute}-${second}_${hash}${ext}"
+    newfilepath="${directory}/${year}-${month}-${day}_${hour}-${minute}-${second}_${hash}${ext}"
 
     # Avoid overwriting existing file
-    if [[ -e "$newname" ]]; then
-        echo "Skipping '$file': target '$newname' already exists" >&2
+    if [[ -e "$newfilepath" ]]; then
+        echo "Skipping '$filepath': target '$newfilepath' already exists" >&2
         continue
     fi
 
-    mv -- "$file" "$newname"
-    echo "Renamed '$file' -> '$newname'"
+    mv -- "$filepath" "$newfilepath"
+    echo "Renamed '$filepath' -> '$newfilepath'"
 done
