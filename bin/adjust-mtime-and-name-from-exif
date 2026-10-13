@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ $# -eq 0 ]
+then
+    echo "Adjust modification timestamp and names of files based solely on their EXIF metadata" >&2
+    echo "Tags (by priority): DateTimeOriginal (+OffsetTimeOriginal), Keys:CreationDate, QuickTime:CreateDate (UTC)" >&2
+    echo "Usage: $0 [FILES...]" >&2
+    exit 1
+fi
+
+if
+    ! command -v exiftool >/dev/null
+then
+    echo "Could not find exiftool in PATH" >&2
+    exit 1
+fi
+
+exit_code=0
+
+for filepath in "$@"
+do
+    ## Make sure filepath points to a file
+
+    if
+        [[ ! -e "$filepath" ]]
+    then
+        echo "File does not exist: $filepath" >&2
+        exit_code=1
+        continue
+    elif
+        [[ ! -f "$filepath" ]]
+    then
+        echo "Not a file: $filepath" >&2
+        exit_code=1
+        continue
+    fi
+
+    ## Separate filepath into directory and filename
+
+    directory=$(dirname "$filepath")
+    filename=$(basename "$filepath")
+
+    ## Extract dates from EXIF metadata (missing tags are printed as '-')
+
+    if
+        ! exif_dates=`exiftool -q -q -T -f \
+            -ExifIFD:DateTimeOriginal \
+            -ExifIFD:OffsetTimeOriginal \
+            -Keys:CreationDate \
+            -QuickTime:CreateDate \
+            -- "$filepath"`
+    then
+        echo "Could not read EXIF metadata from file '$filepath'" >&2
+        exit_code=1
+        continue
+    fi
+
+    IFS=$'\t' read -r datetime_original offset_time_original creation_date create_date <<< "$exif_dates"
+
+    ## Pick timestamp from EXIF metadata, in order of priority
+    ## Dates are formatted as CCYY:MM:DD HH:mm:ss, and zeroed dates are ignored
+    ## The new timestamp is in the format CCYY-MM-DD HH:mm:ss[+-HH:MM]
+
+    date_pattern='^[0-9]{4}:[0-9]{2}:[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}'
+    offset_pattern='^[+-][0-9]{2}:[0-9]{2}$'
+    is_utc=false
+
+    if
+        [[ "$datetime_original" =~ $date_pattern ]] && [[ ! "$datetime_original" =~ ^0000 ]]
+    then
+        new_timestamp=`echo "$datetime_original" | sed -E 's/^([0-9]{4}):([0-9]{2}):([0-9]{2}) ([0-9:]{8}).*/\1-\2-\3 \4/'`
+
+        if
+            [[ "$offset_time_original" =~ $offset_pattern ]]
+        then
+            new_timestamp="${new_timestamp}${offset_time_original}"
+        fi
+    elif
+        [[ "$creation_date" =~ $date_pattern ]] && [[ ! "$creation_date" =~ ^0000 ]]
+    then
+        new_timestamp=`echo "$creation_date" | sed -E 's/^([0-9]{4}):([0-9]{2}):([0-9]{2}) ([0-9:]{8})([+-][0-9]{2}:[0-9]{2})?.*/\1-\2-\3 \4\5/'`
+    elif
+        [[ "$create_date" =~ $date_pattern ]] && [[ ! "$create_date" =~ ^0000 ]]
+    then
+        # QuickTime dates are stored in UTC
+        is_utc=true
+        new_timestamp=`echo "$create_date" | sed -E 's/^([0-9]{4}):([0-9]{2}):([0-9]{2}) ([0-9:]{8}).*/\1-\2-\3 \4+00:00/'`
+    else
+        echo "Could not extract timestamp from EXIF metadata of file '$filepath'" >&2
+        exit_code=1
+        continue
+    fi
+
+    ## Check if new timestamp is well-formed
+
+    if
+        [[ ! "$new_timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2})?$ ]]
+    then
+        echo "Internal error: Ill-formed new timestamp '$new_timestamp' from file '$filepath'" >&2
+        exit 1
+    fi
+
+    ## Convert new timestamp to Unix time (timestamps without offset are in local time)
+
+    if
+        ! new_timestamp_unix=`date -d "$new_timestamp" '+%s' 2>/dev/null`
+    then
+        echo "Invalid timestamp '$new_timestamp' in EXIF metadata of file '$filepath'" >&2
+        exit_code=1
+        continue
+    fi
+
+    ## Extract timestamp from file
+
+    current_timestamp_unix=`stat -c '%Y' "$filepath"`
+
+    ## Extract extension from filename
+
+    if
+        [[ "$filename" =~ \. ]]
+    then
+        extension=".${filename##*.}"
+    else
+        extension=""
+    fi
+
+    ## Calculate file hash
+
+    filehash=`sha256sum -- "$filepath" | awk '{ print $1 }'`
+
+    if
+        [[ -z "$filehash" ]]
+    then
+        echo "Internal error: Could not compute the SHA-256 hash of '$filepath'" >&2
+        exit 1
+    fi
+
+    ## Construct new filename
+    ## Use the wall-clock time from the camera, except for UTC dates (converted to local time)
+
+    if
+        [[ "$is_utc" == true ]]
+    then
+        datestring=`date -d "@${new_timestamp_unix}" '+%Y-%m-%d_%H-%M-%S'`
+    else
+        datestring=`echo "${new_timestamp:0:19}" | sed -E 's/ /_/; s/:/-/g'`
+    fi
+
+    if
+        [[ ! $datestring =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]]
+    then
+        echo "Internal error: Ill-formed CCYY-MM-DD_HH-mm-ss date string '$datestring'" >&2
+        exit 1
+    fi
+
+    shortened_filehash=`echo $filehash | head -c5`
+
+    if
+        [[ ! $shortened_filehash =~ ^[0-9a-fA-F]+$ ]]
+    then
+        echo "Internal error: Ill-formed hexstring '$shortened_filehash'" >&2
+        exit 1
+    fi
+
+    newfilepath=${directory}/${datestring}__${shortened_filehash}${extension}
+
+    ## Check if new filepath points to a non-existing file or file of equal hash
+
+    if
+        [[ -f "$newfilepath" ]]
+    then
+        newfilehash=`sha256sum "$newfilepath" | awk '{ print $1 }'`
+
+        if
+            [[ "$filehash" != "$newfilehash" ]]
+        then
+            echo "Cannot overwrite file '$newfilepath' with different hash than '$filepath'" >&2
+            exit_code=1
+            continue
+        fi
+    elif
+        [[ -d "$newfilepath" ]]
+    then
+        echo "Cannot overwrite '$newfilepath', because it is a directory" >&2
+        exit_code=1
+        continue
+    fi
+
+    ## Rename file (if new path is different)
+
+    if
+        [[ ! "$filepath" -ef "$newfilepath" ]]
+    then
+        mv -v "$filepath" "$newfilepath"
+    fi
+
+    ## Adjust timestamp of file
+
+    if
+        [[ "$new_timestamp_unix" != "$current_timestamp_unix" ]]
+    then
+        touch -d "@${new_timestamp_unix}" -- "$newfilepath"
+        echo "Adjusted timestamp of $newfilepath"
+    fi
+done
+
+## Exit with code
+
+exit $exit_code
